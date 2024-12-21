@@ -51,75 +51,46 @@ void die(const char *s)
     exit(1);
 }
 
-void disableRawMode()
-{
-    if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1)
-    {
-        die("tcsetattr");
-    }
+void disableRawMode() {
+  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1)
+    die("tcsetattr");
 }
 
-void enableRawMode()
-{
-    if(tcgetattr(STDIN_FILENO, &E.orig_termios) == -1)
-    {
-        die("tcgettattr");
-    }
+void enableRawMode() {
+  if (tcgetattr(STDIN_FILENO, &E.orig_termios) == -1) die("tcgetattr");
+  atexit(disableRawMode);
 
-    atexit(disableRawMode);
+  struct termios raw = E.orig_termios;
+  raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+  raw.c_oflag &= ~(OPOST);
+  raw.c_cflag |= (CS8);
+  raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+  raw.c_cc[VMIN] = 0;
+  raw.c_cc[VTIME] = 1;
 
-    struct termios raw = E.orig_termios;
-    // disable  ctrl+s/q
-    raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
-
-    raw.c_oflag &= ~(OPOST);
-
-    raw.c_cflag |= (CS8);
-
-    // disable echo, cananical mode, ctrl+v and signal interrupts liek ctrl+c/z
-    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-
-    raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 1;
-
-    if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1)
-    {
-        die("tcsetattr");
-    }
+  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
 }
 
 int editorReadKey()
 {
     int nread;
     char c;
-    while ((nread = read(STDIN_FILENO, &c, 1)) != 1)
-    {
-        if (nread == -1 && errno != EAGAIN)
-        {
-            die("read");
-        }
+    while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+        if (nread == -1 && errno != EAGAIN) die("read");
     }
 
     if (c == '\x1b')
     {
         char seq[3];
 
-        if (read(STDIN_FILENO, &seq[0], 1) != 1)
-        {
-            return '\x1b';
-        }
-        if (read(STDIN_FILENO, &seq[1], 1) != 1)
-        {
-            return '\x1b';
-        }
+        if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+        if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+
         if (seq[0] == '[')
         {
             if (seq[1] >= '0' && seq[1] <= '9')
             {
-                if (read(STDIN_FILENO, &seq[2], 1) != 1)
-                {
-                    return '\x1b';
-                }
+                if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
                 if (seq[2] == '~')
                 {
                     switch (seq[1])
@@ -164,54 +135,34 @@ int getCursorPosition(int *rows, int *cols)
     char buf[32];
     unsigned int i = 0;
 
-    if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4)
-    {
-        return -1;
-    }
+    if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
 
     while (i < sizeof(buf) - 1)
     {
-        if (read(STDIN_FILENO, &buf[i], 1) != 1)
-        {
-            break;
-        }
-        if (buf[i] == 'R')
-        {
-            break;
-        }
+        if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
+        if (buf[i] == 'R') break;
         i++;
     }
 
     buf[i] = '\0';
 
-    if (buf[0] != '\x1b' || buf[1] != '[')
-    {
-        return -1;
-    }
-
-    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2)
-    {
-        return -1;
-    }
+    if (buf[0] != '\x1b' || buf[1] != '[') return -1;
+    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
     
     return 0;
 }
 
-int getWindowSize(int *rows, int *cols)
-{
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
-    {
-        if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12)
-        {
-            return -1;
-        }
-        return getCursorPosition(rows, cols);
-    } else {
-        *cols = ws.ws_col;
-        *rows = ws.ws_row;
-        return 0;
-    }   
+int getWindowSize(int *rows, int *cols) {
+  struct winsize ws;
+
+  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+    if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
+    return getCursorPosition(rows, cols);
+  } else {
+    *cols = ws.ws_col;
+    *rows = ws.ws_row;
+    return 0;
+  }
 }
 
 /*** append buffer ***/
@@ -224,17 +175,13 @@ struct abuf
 
 #define ABUF_INIT {NULL, 0}
 
-void abAppend(struct abuf *ab, const char *s, int len)
-{
-    char *new = realloc(ab->b, ab->len + len);
+void abAppend(struct abuf *ab, const char *s, int len) {
+  char *new = realloc(ab->b, ab->len + len);
 
-    if (new == NULL)
-    {
-        return;
-    }
-    memcpy(&new[ab->len], s, len);
-    ab->b = new;
-    ab->len += len;
+  if (new == NULL) return;
+  memcpy(&new[ab->len], s, len);
+  ab->b = new;
+  ab->len += len;
 }
 
 void abFree(struct abuf *ab)
@@ -244,43 +191,30 @@ void abFree(struct abuf *ab)
 
 /*** output ***/
 
-void editorDrawRows(struct abuf *ab)
-{
-    int y;
-    for (y = 0; y < E.screenrows; y++)
-    {
-        if (y == E.screenrows / 3)
-        {
-            char welcome[80];
-            int welcomelen = snprintf(welcome, sizeof(welcome),
-                "Gram editor -- version %s", GRAM_VERSION);
-            if (welcomelen > E.screencols)
-            {
-                welcomelen = E.screencols;
-            }
-            int padding = (E.screencols - welcomelen) / 2;
-            if (padding)
-            {
-                abAppend(ab, "~", 1);
-                padding--;
-            }
-            while (padding--)
-            {
-                abAppend(ab, " ", 1);
-            }
-            
-            abAppend(ab, welcome, welcomelen);
-        } else {
-            abAppend(ab, "~", 1);
-        }
-        
-        abAppend(ab, "\x1b[K", 3);
-        if (y < E.screenrows - 1)
-        {
-            abAppend(ab, "\r\n", 2);
-        }
-        
+void editorDrawRows(struct abuf *ab) {
+  int y;
+  for (y = 0; y < E.screenrows; y++) {
+    if (y == E.screenrows / 3) {
+      char welcome[80];
+      int welcomelen = snprintf(welcome, sizeof(welcome),
+        "Gram editor -- version %s", GRAM_VERSION);
+      if (welcomelen > E.screencols) welcomelen = E.screencols;
+      int padding = (E.screencols - welcomelen) / 2;
+      if (padding) {
+        abAppend(ab, "~", 1);
+        padding--;
+      }
+      while (padding--) abAppend(ab, " ", 1);
+      abAppend(ab, welcome, welcomelen);
+    } else {
+      abAppend(ab, "~", 1);
     }
+
+    abAppend(ab, "\x1b[K", 3);
+    if (y < E.screenrows - 1) {
+      abAppend(ab, "\r\n", 2);
+    }
+  }
 }
 
 void editorRefreshScreen()
